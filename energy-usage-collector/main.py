@@ -21,7 +21,6 @@ for y, m in mm_range():
         service_name = next((k for k in data.keys() if k != "RESULT"), None)
         rows = data.get(service_name, {}).get("row", [])
 
-        # 🔸 '개인' 유형만 필터링
         personal_rows = [r for r in rows if "개인" in str(r.get("MEMBER_TYPE", "")) or "개인" in str(r.get("GUBUN", ""))]
 
         total += len(personal_rows)
