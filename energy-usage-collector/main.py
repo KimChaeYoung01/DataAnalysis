@@ -1,26 +1,26 @@
 import requests
 
-base_url = "http://openapi.seoul.go.kr:8088/5342566c576b637937367950626c6f/json/TB_ECO_ENERGYUSE/1/1000/"
+API_KEY = "51706a57456b63793131374d46557569"
+TEMPLATE = "http://openapi.seoul.go.kr:8088/{key}/json/energyUseDataSummaryInfo/1/1000/{year}/{month}"
 
-all_data = []  
+def mm_range():
+    y, m = 2015, 1
+    while (y < 2024) or (y == 2024 and m <= 12):
+        yield y, m
+        m = 1 if m == 12 else m + 1
+        y = y + 1 if m == 1 else y
 
-for year in range(2015, 2025):
-    print(f"{year}년 데이터 수집.")
-    response = requests.get(base_url)
-    
-    if response.status_code == 200:
-        data = response.json()
-        rows = data.get("TB_ECO_ENERGYUSE", {}).get("row", [])
-        
-        yearly = [r for r in rows if str(year) in r.get("YM", "")]
-        all_data.extend(yearly)
-        
-        print(f"{year}년 수집 완료 ({len(yearly)}건)")
+total = 0
+for y, m in mm_range():
+    url = TEMPLATE.format(key=API_KEY, year=y, month=f"{m:02d}")
+    r = requests.get(url)
+    if r.status_code == 200:
+        print(f"{y}-{m:02d}월 api 호출 성공")
+        data = r.json()
+        svc = next((k for k in data.keys() if k != "RESULT"), None)
+        rows = data.get(svc, {}).get("row", [])
+        total += len(rows)
     else:
-        print(f"{year}년 수집 실패: {response.status_code}")
-    
-  
-print("전체 기간 데이터 수집 완료")
-print(f"총 수집 건수: {len(all_data)}")
-for r in all_data[:5]:
-    print(r)
+        print(f"{y}-{m:02d}월 api 호출 실패 ({r.status_code})")
+
+print(f"전체 데이터 수집 완료, 총 {total}건")
