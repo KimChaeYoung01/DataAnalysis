@@ -1,0 +1,110 @@
+import os
+import requests
+import pandas as pd
+
+API_KEY = os.getenv("SEOUL_API_KEY") or "51706a57456b63793131374d46557569"
+TEMPLATE = "http://openapi.seoul.go.kr:8088/{key}/json/energyUseDataSummaryInfo/1/1000/{year}/{month}"
+
+def mm_range():
+    y, m = 2015, 1
+    while (y < 2025) or (y == 2025 and m <= 12):
+        yield y, m
+        m = 1 if m == 12 else m + 1
+        y = y + 1 if m == 1 else y
+
+all_rows = []
+for y, m in mm_range():
+    url = TEMPLATE.format(key=API_KEY, year=y, month=f"{m:02d}")
+    try:
+        r = requests.get(url, timeout=10)
+    except Exception as e:
+        print(f"{y}-{m:02d} ▶ 네트워크 오류: {e}")
+        continue
+
+    if r.status_code != 200:
+        print(f"{y}-{m:02d} ▶ HTTP {r.status_code}")
+        continue
+
+    data = r.json()
+    service_name = next((k for k in data.keys() if k != "RESULT"), None)
+    rows = data.get(service_name, {}).get("row", []) if service_name else []
+
+    print(f"{y}-{m:02d} ▶ rows={len(rows)}")
+
+    for row in rows:
+        row["_REQ_YEAR"] = y
+        row["_REQ_MONTH"] = m
+        all_rows.append(row)
+
+df = pd.DataFrame(all_rows)
+
+print("\n=== [2-1] DataFrame 기본 정보 (df.info) ===")
+print(df.info())
+print("\n=== [2-1] 상위 5행 (df.head) ===")
+print(df.head())
+print("\n현재 df 컬럼 목록:")
+print(df.columns.tolist())
+
+
+if "_REQ_YEAR" in df.columns and "_REQ_MONTH" in df.columns:
+    df["date"] = pd.to_datetime(
+        df["_REQ_YEAR"].astype(int).astype(str) + "-" +
+        df["_REQ_MONTH"].astype(int).astype(str).str.zfill(2) + "-01",
+        errors="coerce"
+    )
+else:
+    def find_col(df, candidates):
+        cand_upper = [c.upper() for c in candidates]
+        for col in df.columns:
+            if col.upper() in cand_upper:
+                return col
+        return None
+
+    year_candidates  = ['YR','YEAR','연도','STD_YYYY','YYYY','YEAR_CD']
+    month_candidates = ['MM','MONTH','월','STD_MM','MON','MONTH_CD']
+    ym_candidates    = ['YM','YYYYMM','USE_YM','STD_YM','YEAR_MONTH','YEARMM']
+    dt_candidates    = ['REG_DATE','DATE','REG_DT']
+
+    year_col  = find_col(df, year_candidates)
+    month_col = find_col(df, month_candidates)
+    ym_col    = find_col(df, ym_candidates)
+    dt_col    = find_col(df, dt_candidates)
+
+    if year_col and month_col:
+        yser = df[year_col].astype(str).str.extract(r'(\d{4})', expand=False)
+        mser = df[month_col].astype(str).str.extract(r'(\d{1,2})', expand=False).fillna("1").str.zfill(2)
+        df["date"] = pd.to_datetime(yser + "-" + mser + "-01", errors="coerce")
+    elif ym_col:
+        ym = df[ym_col].astype(str).str.replace(r'\D','', regex=True).apply(lambda s: s[-6:].zfill(6))
+        df["date"] = pd.to_datetime(ym.str[:4] + "-" + ym.str[4:6] + "-01", errors="coerce")
+    elif dt_col:
+        df["date"] = pd.to_datetime(df[dt_col], errors="coerce")
+    else:
+        raise ValueError(f"연/월 컬럼을 찾을 수 없습니다. 실제 컬럼: {df.columns.tolist()}")
+
+df["year"] = df["date"].dt.year
+
+def get_season(m: int) -> str:
+    if m in (3, 4, 5):
+        return "봄"
+    if m in (6, 7, 8):
+        return "여름"
+    if m in (9, 10, 11):
+        return "가을"
+    return "겨울"  # 12, 1, 2
+
+df["season"] = df["date"].dt.month.apply(lambda x: get_season(int(x)) if pd.notna(x) else None)
+
+print("\n=== [2-2] 변환 결과 확인 (date, year, season 상위 12행) ===")
+print(df[['date','year','season']].head(12))
+
+print("\n[체크] 날짜 범위:", df['date'].min(), "→", df['date'].max())
+print("\n[체크] 연도 분포")
+print(df['year'].value_counts().sort_index())
+
+print("\n[체크] 계절별 건수")
+print(df['season'].value_counts())
+
+# (선택) 저장
+df.to_csv("energy_preprocessed.csv", index=False, encoding="utf-8-sig")
+print("\n[저장] energy_preprocessed.csv")
